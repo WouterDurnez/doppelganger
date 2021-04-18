@@ -17,6 +17,8 @@ import numpy as np
 from matplotlib.patches import Rectangle
 from mtcnn import MTCNN
 from tqdm import tqdm
+from helper import log
+from torchvision.datasets import cifar
 
 
 def read_images(dir: str, max_images=None, extension='jpeg') -> np.ndarray:
@@ -59,8 +61,11 @@ def save_images(images: np.ndarray, dir: str, extension='jpg'):
 
     # Write out files
     for idx, image in tqdm(enumerate(images), desc='Saving face(s)'):
-        image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-        cv2.imwrite(os.path.join(dir, f'face{idx}.{extension}'), image)
+        try:
+            image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+            cv2.imwrite(os.path.join(dir, f'face{idx}.{extension}'), image)
+        except Exception as e:
+            log(f'Failed to save index {idx} - {e}')
 
 
 def extract_faces(images: np.ndarray, show_plot=True) -> (np.ndarray, np.ndarray):
@@ -155,10 +160,14 @@ if __name__ == '__main__':
     faces, boxes = extract_faces(images=images, show_plot=False)
 
     # Rescale faces --> Nope, let pytorch take care of that
-    # faces = scale_images(images=faces, dimensions=(100,100))
+    #faces = scale_images(images=faces, dimensions=(100,100))
 
     # Write faces to folder
     save_images(images=faces, dir='../data/faces')
+
+    # Let's also download Cifar
+    cifar_dir = '../data/cifar'
+    cifar.CIFAR10(root=cifar_dir,train=True,download=True)
 
     plt.imshow(faces[0])
     plt.show()

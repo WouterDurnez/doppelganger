@@ -20,7 +20,7 @@ from skimage import io
 from torch.utils.data import Dataset, DataLoader, random_split
 from torchvision.utils import make_grid
 from torchvision.transforms import Resize, ToTensor, ToPILImage, Normalize
-
+from pl_bolts.datamodules import CIFAR10DataModule
 from helper import log, hi
 
 
@@ -57,7 +57,7 @@ class DoppelDataset(Dataset):
 
 class DoppelDataModule(pl.LightningDataModule):
 
-    def __init__(self, data_dir='../data/faces', batch_size: int = 64, num_workers: int = 0):
+    def __init__(self, data_dir='../data/faces', batch_size: int = 64, num_workers: int = 0, image_shape: tuple = (100,100)):
         super().__init__()
         self.data_dir = data_dir
         self.batch_size = batch_size
@@ -65,7 +65,7 @@ class DoppelDataModule(pl.LightningDataModule):
 
         self.transforms = transforms.Compose([
             ToTensor(),
-            Resize(100),
+            Resize(image_shape),
             Normalize(mean=(123.26290927634774, 95.90498110733365, 86.03763122875182),
                       std=(63.20679012922922, 54.86211954409834, 52.31266645797249))
         ])
@@ -79,6 +79,8 @@ class DoppelDataModule(pl.LightningDataModule):
         train_size = int(.8 * n)
         val_size = int(.1 * n)
         test_size = n - (train_size + val_size)
+
+        print('DATA SIZES', train_size, val_size, test_size)
 
         self.train_data, self.val_data, self.test_data = random_split(dataset=doppel_data,
                                                                       lengths=[train_size, val_size, test_size])
@@ -167,6 +169,8 @@ class DoppelGAN(pl.LightningModule):
                  **kwargs):
 
         super().__init__()
+
+        # Save all keyword arguments as hyperparameters, accessible through self.hparams.X)
         self.save_hyperparameters()
 
         # Initialize networks
@@ -183,12 +187,12 @@ class DoppelGAN(pl.LightningModule):
         return F.binary_cross_entropy(y_hat, y)
 
     def training_step(self, batch, batch_idx, optimizer_idx):
-        images = batch
+        images, _ = batch
 
-        # Sample noise (batchsize, latent_dim,1,1)
-        z = torch.randn(images.shape[0], self.hparams.latent_dim,1,1)
+        # Sample noise (batch_size, latent_dim,1,1)
+        z = torch.randn(images.size(0), self.hparams.latent_dim,1,1)
 
-        # Train generator #todo: understand this - does a training step loop over batches and optimizers?
+        # Train generator
         if optimizer_idx == 0:
 
             # Generate images (call generator -- see forward -- on latent vector)
@@ -259,25 +263,30 @@ if __name__ == '__main__':
     hi()
 
     # Global parameter
-    image_dim = 100
+    image_dim = 128
     latent_dim = 100
-    batch_size = 128
+    batch_size = 64
+
+    # Cifar?
+    cifar = True
 
     # Initialize dataset
     tfs = transforms.Compose([
-        ToPILImage(),
+        #ToPILImage(),
         Resize(image_dim),
         ToTensor()
     ])
-    face_dataset = DoppelDataset(face_dir='../data/faces', transform=tfs)
+    doppel_dataset = DoppelDataset(face_dir='../data/faces', transform=tfs)
 
     # Initialize data module
-    face_data_module = DoppelDataModule(batch_size=batch_size)
+    if cifar:
+        doppel_data_module = CIFAR10DataModule('../data/cifar',train_transforms=tfs,num_workers=2)
+    else:
+        doppel_data_module = DoppelDataModule(batch_size=batch_size)
 
     # Build models
     generator = DoppelGenerator(latent_dim=latent_dim)
     discriminator = DoppelDiscriminator()
-    doppelgan = DoppelGAN(batch_size=batch_size, channels=3, width=image_dim, height=image_dim, latent_dim=latent_dim)
 
     # Test generator
     x = torch.rand(batch_size, latent_dim, 1, 1)
@@ -289,9 +298,12 @@ if __name__ == '__main__':
     y = discriminator(x)
     log(f'Discriminator: x {x.size()} --> y {y.size()}')
 
+    # Build GAN
+    doppelgan = DoppelGAN(batch_size=batch_size, channels=3, width=image_dim, height=image_dim, latent_dim=latent_dim)
+
     # Fit GAN
-    trainer = pl.Trainer(gpus=0, max_epochs=5, progress_bar_refresh_rate=20)
-    trainer.fit(model=doppelgan, datamodule=face_data_module)
+    trainer = pl.Trainer(gpus=0, max_epochs=5, progress_bar_refresh_rate=1)
+    trainer.fit(model=doppelgan, datamodule=doppel_data_module)
 
 
     '''image = y[0].detach().numpy()
