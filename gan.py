@@ -149,7 +149,7 @@ class DoppelGenerator(nn.Sequential):
             ).cuda()
 
         self.model = nn.Sequential(
-            block(latent_dim, 512, padding=0, stride=1).to(device),
+            block(latent_dim, 512, padding=0, stride=1),
             block(512, 256),
             block(256, 128),
             block(128, 64),
