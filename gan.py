@@ -66,7 +66,7 @@ class DoppelDataModule(pl.LightningDataModule):
         self.transforms = transforms.Compose([
             ToTensor(),
             Resize(image_shape),
-            Normalize(mean=(123.26290927634774, 95.90498110733365, 86.03763122875182),
+            Normalize(mean=(123.26290927634774, 95.90498110733365, 86.03763122875182), # Naar grayscale, dan normaliseren
                       std=(63.20679012922922, 54.86211954409834, 52.31266645797249))
         ])
 
@@ -187,7 +187,7 @@ class DoppelGAN(pl.LightningModule):
         return F.binary_cross_entropy(y_hat, y)
 
     def training_step(self, batch, batch_idx, optimizer_idx):
-        images, _ = batch
+        images = batch
 
         # Sample noise (batch_size, latent_dim,1,1)
         z = torch.randn(images.size(0), self.hparams.latent_dim,1,1)
@@ -268,11 +268,11 @@ if __name__ == '__main__':
     batch_size = 64
 
     # Cifar?
-    cifar = True
+    cifar = False
 
     # Initialize dataset
     tfs = transforms.Compose([
-        #ToPILImage(),
+        ToPILImage(),
         Resize(image_dim),
         ToTensor()
     ])
@@ -302,8 +302,8 @@ if __name__ == '__main__':
     doppelgan = DoppelGAN(batch_size=batch_size, channels=3, width=image_dim, height=image_dim, latent_dim=latent_dim)
 
     # Fit GAN
-    trainer = pl.Trainer(gpus=0, max_epochs=5, progress_bar_refresh_rate=1)
-    trainer.fit(model=doppelgan, datamodule=doppel_data_module)
+    #trainer = pl.Trainer(gpus=0, max_epochs=5, progress_bar_refresh_rate=1)
+    #trainer.fit(model=doppelgan, datamodule=doppel_data_module)
 
 
     '''image = y[0].detach().numpy()

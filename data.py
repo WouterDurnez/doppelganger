@@ -17,7 +17,7 @@ import numpy as np
 from matplotlib.patches import Rectangle
 from mtcnn import MTCNN
 from tqdm import tqdm
-from helper import log
+from helper import log, hi
 from torchvision.datasets import cifar
 
 
@@ -31,7 +31,7 @@ def read_images(dir: str, max_images=None, extension='jpeg') -> np.ndarray:
     """
 
     # Generate all image paths to jpeg
-    image_paths = [os.path.join(dir, file) for file in os.listdir(raw_dir) if file.endswith(extension)]
+    image_paths = [os.path.join(dir, file) for file in os.listdir(dir) if file.endswith(extension)]
 
     # Only read *max_images*, unless there's not even that many
     end = max_images if (max_images and max_images < len(image_paths)) else -1
@@ -68,10 +68,11 @@ def save_images(images: np.ndarray, dir: str, extension='jpg'):
             log(f'Failed to save index {idx} - {e}')
 
 
-def extract_faces(images: np.ndarray, show_plot=True) -> (np.ndarray, np.ndarray):
+def extract_faces(images: np.ndarray, buffer:float =.15, show_plot:bool=True) -> (np.ndarray, np.ndarray):
     """
     Extract faces and bounding boxes from images
     :param images: images to find faces in
+    :param buffer: percentage of max(width,height) to add as a buffer around the detection
     :param show_plot: show plot or not
     :return: list of faces, list of bounding box coordinates
     """
@@ -100,13 +101,19 @@ def extract_faces(images: np.ndarray, show_plot=True) -> (np.ndarray, np.ndarray
 
             diff = np.abs(width - height) / 2
 
-            # I want square cutouts
+            # I want square cutouts that are slightly bigger
             if width < height:
                 x = int(x - diff)
                 width = height
             else:
                 y = int(y - diff)
                 height = width
+
+            # Edge buffer
+            x = int(x - buffer*width)
+            y = int(y - buffer*width)
+            width = int((1 + 2*buffer)*width)
+            height = int((1 + 2*buffer)*height)
 
             # Crop face out of image
             image_cropped = image[y:y + height, x:x + width]
@@ -150,24 +157,28 @@ def scale_images(images: np.ndarray, dimensions: tuple) -> np.ndarray:
 
 
 if __name__ == '__main__':
+
+    hi(title='Data prep', params={'timestamped':True})
+
     # Location of raw data
-    raw_dir = '../data/raw'
+    raw_dir = '../data/me/raw'
+    fake_dir = '../data/fake/original'
 
     # Get images
-    images = read_images(dir=raw_dir)
+    faces = read_images(dir=fake_dir,extension='jpg')
 
     # Get faces
-    faces, boxes = extract_faces(images=images, show_plot=False)
+    #faces, boxes = extract_faces(images=images, show_plot=False)
 
     # Rescale faces --> Nope, let pytorch take care of that
-    #faces = scale_images(images=faces, dimensions=(100,100))
+    faces = scale_images(images=faces, dimensions=(128,128))
 
     # Write faces to folder
-    save_images(images=faces, dir='../data/faces')
+    save_images(images=faces, dir='../data/fake/rescaled')
 
     # Let's also download Cifar
-    cifar_dir = '../data/cifar'
-    cifar.CIFAR10(root=cifar_dir,train=True,download=True)
+    '''cifar_dir = '../data/cifar'
+    cifar.CIFAR10(root=cifar_dir,train=True,download=True)'''
 
     plt.imshow(faces[0])
     plt.show()

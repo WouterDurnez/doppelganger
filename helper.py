@@ -26,10 +26,10 @@ def set_params(verbosity: int = None, timestamped: bool = None, data_dir: str = 
     if data_dir:
         log("DATA_DIR is now set to {}".format(DATA_DIR), verbosity=1)
     if verbosity:
-        log("VERBOSITY is set to {}".format(TIMESTAMPED),verbosity=1)
+        log("VERBOSITY is set to {}".format(VERBOSITY),verbosity=1)
 
 
-def hi(title=None):
+def hi(title=None, params=None):
     """
     Say hello. (It's stupid, I know.)
     If there's anything to initialize, do so here.
@@ -45,6 +45,10 @@ def hi(title=None):
 
     if title:
         log(title, title=True)
+
+    # Set parameters
+    if params and isinstance(params,dict):
+        set_params(**params)
 
     print("VERBOSITY is set to {}.".format(VERBOSITY))
     print("DATA_DIR is set to {}".format(DATA_DIR))
