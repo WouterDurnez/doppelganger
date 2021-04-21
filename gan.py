@@ -77,6 +77,7 @@ class DoppelDataModule(pl.LightningDataModule):
             #    mean=[x / 255.0 for x in [125.3, 123.0, 113.9]],
             #    std=[x / 255.0 for x in [63.0, 62.1, 66.7]],
             #)
+
         ])
 
     def setup(self, stage=None):
@@ -235,10 +236,12 @@ class DoppelGAN(pl.LightningModule):
         return F.binary_cross_entropy(y_hat, y)
 
     def training_step(self, batch, batch_idx, optimizer_idx):
-        if cifar:
+
+      if cifar:
             images, _ = batch
         else:
             images = batch
+
 
         # Sample noise (batch_size, latent_dim,1,1)
         z = torch.randn(images.size(0), self.hparams.latent_dim, 1, 1).cuda()
@@ -331,6 +334,14 @@ if __name__ == '__main__':
     # Cifar?
     cifar = False
 
+    """# Initialize dataset
+    tfs = transforms.Compose([
+        ToPILImage(),
+        Resize(image_dim),
+        ToTensor()
+    ])
+    doppel_dataset = DoppelDataset(face_dir='../data/faces', transform=tfs)"""
+
     # Initialize data module
     if cifar:
         # Initialize dataset
@@ -373,6 +384,7 @@ if __name__ == '__main__':
     # Fit GAN
     trainer = pl.Trainer(gpus=1, max_epochs=100, progress_bar_refresh_rate=1)
     trainer.fit(model=doppelgan, datamodule=doppel_data_module)
+
 
     '''
     image = y[0].detach().numpy()
