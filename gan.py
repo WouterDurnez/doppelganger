@@ -19,11 +19,12 @@ import torchvision.transforms as transforms
 from pl_bolts.datamodules import CIFAR10DataModule
 from skimage import io
 from tensorboard import program
+from torch.autograd import Variable
 from torch.utils.data import Dataset, DataLoader, random_split
 from torchvision.transforms import Resize, ToTensor, Normalize
 from torchvision.utils import make_grid
 
-from helper import log, hi
+from helper import log, hi, compute_gradient_penalty
 
 
 class DoppelDataset(Dataset):
@@ -74,9 +75,9 @@ class DoppelDataModule(pl.LightningDataModule):
         self.transforms = transforms.Compose([
             ToTensor(),
             #Normalize(
-            #    mean=[x / 255.0 for x in [125.3, 123.0, 113.9]],
-            #    std=[x / 255.0 for x in [63.0, 62.1, 66.7]],
-            #)
+            #    mean=[.5, .5, .5],
+            #    std=[.5, .5, .5],
+            #),
         ])
 
     def setup(self, stage=None):
@@ -145,7 +146,7 @@ class DoppelGenerator(nn.Sequential):
                     bias=bias
                 ),
                 nn.BatchNorm2d(num_features=out_channels),
-                nn.ReLU(True)
+                nn.ReLU(inplace=False)
             ).cuda()
 
         self.model = nn.Sequential(
@@ -155,12 +156,12 @@ class DoppelGenerator(nn.Sequential):
             block(128, 64),
             block(64, 32),
             nn.ConvTranspose2d(32, 3, kernel_size=4, stride=2, padding=1, bias=False),
-            nn.Tanh()
+            nn.Sigmoid()
         )
         self.model.cuda()
 
     def forward(self, input):
-        return self.model(input).cuda()
+        return self.model(input)
 
 
 class DoppelDiscriminator(nn.Sequential):
@@ -182,7 +183,7 @@ class DoppelDiscriminator(nn.Sequential):
                     bias=False
                 ),
                 nn.BatchNorm2d(num_features=out_channels, momentum=0.8),
-                nn.LeakyReLU(0.2, inplace=True),
+                nn.LeakyReLU(0.2, inplace=False),
             ).cuda()
 
         self.model = nn.Sequential(
@@ -198,7 +199,7 @@ class DoppelDiscriminator(nn.Sequential):
         self.model.cuda()
 
     def forward(self, input):
-        return self.model(input).cuda()
+        return self.model(input)
 
 
 class DoppelGAN(pl.LightningModule):
@@ -215,6 +216,9 @@ class DoppelGAN(pl.LightningModule):
 
         super().__init__()
 
+        self.opt_g = None
+        self.opt_d = None
+
         self.step = 0
 
         # Save all keyword arguments as hyperparameters, accessible through self.hparams.X)
@@ -226,7 +230,7 @@ class DoppelGAN(pl.LightningModule):
         self.generator = DoppelGenerator(latent_dim=self.hparams.latent_dim).cuda()
         self.discriminator = DoppelDiscriminator().cuda()
 
-        self.validation_z = torch.randn(8, self.hparams.latent_dim, 1, 1).cuda()
+        self.validation_z = torch.randn(48, self.hparams.latent_dim, 1, 1, device=device)
 
     def forward(self, input):
         return self.generator(input)
@@ -241,54 +245,79 @@ class DoppelGAN(pl.LightningModule):
             images = batch
 
         # Sample noise (batch_size, latent_dim,1,1)
-        z = torch.randn(images.size(0), self.hparams.latent_dim, 1, 1).cuda()
+        z = torch.randn(images.size(0), self.hparams.latent_dim, 1, 1, device=device)
         z = z.type_as(images)
+
+        # train discriminator
+        if optimizer_idx == 1:
+            fake_images = self(z)
+
+            # real images
+            valid = torch.ones(images.size(0), 1, device=device)
+            real_valid = self.adversarial_loss(self.discriminator(images), valid)
+            # real_valid = -torch.mean(self.discriminator(images))
+
+            # fake images
+            fake = torch.zeros(images.size(0), 1, device=device)
+            fake_valid = self.adversarial_loss(self.discriminator(self(z).detach()), fake)
+            # fake_valid = torch.mean(self.discriminator(self(z).detach()))
+
+            # Compute Wasserstein penalty (probably screwed up :) )
+            penalty = compute_gradient_penalty(discriminator, images.data, fake_images.data, device=device)
+
+            # Add Wasserstein penalty
+            lambda_gp = 2  # loss weight for the gradient penalty
+
+            d_loss = (real_valid + fake_valid) / 2 + lambda_gp * penalty
+
+            tqdm_dict = {'d_loss': d_loss}
+
+            output = {
+                'loss': d_loss,
+                'progress_bar': tqdm_dict,
+                'log': tqdm_dict
+            }
+            return output
 
         # Train generator
         if optimizer_idx == 0:
-            # Generate images (call generator -- see forward -- on latent vector)
-            self.generated_images = self(z)
-
-            # Log sampled images (visualize what the generator comes up with)
-            sample_images = self.generated_images[:6]
-            grid = make_grid(sample_images)
-            self.logger.experiment.add_image('generated_images', grid, self.step)
             self.step += 1
+            self.opt_g.zero_grad()  # pl?
+            # Train the generator every n_critic steps
+            if self.step % 5 == 0:
 
-            # Ground truth result (ie: all fake)
-            valid = torch.ones(images.size(0), 1).cuda()
+                # -----------------
+                #  Train Generator
+                # -----------------
 
-            # Adversarial loss is binary cross-entropy
-            generator_loss = self.adversarial_loss(self.discriminator(self(z)), valid)
-            tqdm_dict = {'gen_loss': generator_loss}
+                # Generate a batch of images
+                crit_fake_images = self(z)
 
-            output = {
-                'loss': generator_loss,
-                'progress_bar': tqdm_dict,
-                'log': tqdm_dict
-            }
-            return output
+                # Loss measures generator's ability to fool the discriminator
+                # Train on fake images
 
-        # Train discriminator: classify real from generated samples
-        if optimizer_idx == 1:
-            # How well can it label as real?
-            valid = torch.ones(images.size(0), 1).cuda()
-            real_loss = self.adversarial_loss(self.discriminator(images), valid)
+                # Ground truth result (ie: all fake)
+                valid = torch.ones(images.size(0), 1).cuda()
+                g_loss = self.adversarial_loss(self.discriminator(self(z)), valid)
+                # g_loss = -torch.mean(self.discriminator(self(z)))
 
-            # How well can it label as fake?
-            fake = torch.zeros(images.size(0), 1).cuda()
-            fake_loss = self.adversarial_loss(
-                self.discriminator(self(z).detach()), fake)
+                # Log sampled images (visualize what the generator comes up with)
+                sample_images = [crit_fake_images[0],
+                                 crit_fake_images[int(len(crit_fake_images) / 2)],
+                                 crit_fake_images[len(crit_fake_images) - 1]]
 
-            # Discriminator loss is the average of these
-            discriminator_loss = (real_loss + fake_loss) / 2
-            tqdm_dict = {'d_loss': discriminator_loss}
-            output = {
-                'loss': discriminator_loss,
-                'progress_bar': tqdm_dict,
-                'log': tqdm_dict
-            }
-            return output
+                grid = make_grid(sample_images)
+                self.logger.experiment.add_image('step_images', grid, self.step)
+
+                tqdm_dict = {'g_loss': g_loss}
+
+                output = {
+                    'loss': g_loss,
+                    'progress_bar': tqdm_dict,
+                    'log': tqdm_dict
+                }
+                return output
+
 
     def configure_optimizers(self):
         lr = self.hparams.lr
@@ -296,19 +325,16 @@ class DoppelGAN(pl.LightningModule):
         b2 = self.hparams.b2
 
         # Optimizers
-        opt_g = torch.optim.Adam(self.generator.parameters(), lr=lr, betas=(b1, b2))
-        opt_d = torch.optim.Adam(self.discriminator.parameters(), lr=lr, betas=(b1, b2))
+        self.opt_g = torch.optim.Adam(self.generator.parameters(), lr=lr, betas=(b1, b2))
+        self.opt_d = torch.optim.Adam(self.discriminator.parameters(), lr=lr, betas=(b1, b2))
 
         # Return optimizers/schedulers (currently no scheduler)
-        return [opt_g, opt_d], []
+        return [self.opt_g, self.opt_d], []
 
     def on_epoch_end(self):
         # Log sampled images
-        self.step = 0
         sample_images = self(self.validation_z)
-
-        # grid = make_grid(sample_images)
-        self.logger.experiment.add_images('GAN_images_' + str(self.current_epoch), sample_images, self.current_epoch)
+        self.logger.experiment.add_images('epoch_images', sample_images, self.current_epoch)
 
 
 if __name__ == '__main__':
@@ -320,7 +346,12 @@ if __name__ == '__main__':
     # Start Tensorboard on localhost:8888
     tb = program.TensorBoard()
     tb.configure(
-        argv=[None, '--logdir', 'c:/Users/aduen/PycharmProjects/doppelganger/lightning_logs/', '--port', '8888'])
+        argv=[
+            None,
+            '--logdir', 'c:/Users/aduen/PycharmProjects/doppelganger/lightning_logs/',
+            '--port', '8888',
+            '--samples_per_plugin', 'images=10'
+        ])
     url = tb.launch()
 
     # Global parameter
@@ -339,10 +370,10 @@ if __name__ == '__main__':
             Resize(image_dim),
             ToTensor()
         ])
-        doppel_data_module = CIFAR10DataModule('../data/cifar', train_transforms=tfs, num_workers=2)
+        doppel_data_module = CIFAR10DataModule('../data/cifar', train_transforms=tfs, num_workers=4)
     else:
         doppel_data_module = DoppelDataModule(
-            data_dir='./data/fakefaces',
+            data_dir='../data/cats/square',
             batch_size=batch_size,
             image_shape=(128, 128),
         )
@@ -371,7 +402,7 @@ if __name__ == '__main__':
     ).cuda()
 
     # Fit GAN
-    trainer = pl.Trainer(gpus=1, max_epochs=100, progress_bar_refresh_rate=1)
+    trainer = pl.Trainer(gpus=1, max_epochs=200, progress_bar_refresh_rate=1)
     trainer.fit(model=doppelgan, datamodule=doppel_data_module)
 
     '''

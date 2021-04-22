@@ -8,7 +8,7 @@
 DATA PREPARATION
 -- Coded by Wouter Durnez
 """
-
+import math
 import os
 
 import cv2
@@ -21,7 +21,7 @@ from helper import log
 from torchvision.datasets import cifar
 
 
-def read_images(dir: str, max_images=None, extension='jpeg') -> np.ndarray:
+def read_images(dir: str, max_images=None, extension='jpg') -> np.ndarray:
     """
     Read a number of images from a directory
     :param dir: directory containing image files
@@ -127,6 +127,26 @@ def extract_faces(images: np.ndarray, show_plot=True) -> (np.ndarray, np.ndarray
     return np.array(cropped_faces), np.array(boxes)
 
 
+# No distortion
+def square_crop_image(image):
+    # grab the image size
+    h, w = image.shape[:2]
+
+    cropped = image
+
+    # square crop
+    if h > w:
+        diff = math.floor((h - w)/2)
+        cropped = image[diff:h-diff, 0:w-1]
+
+    if w > h:
+        diff = math.floor((w - h) / 2)
+        cropped = image[0:h-1, diff:w-diff]
+
+    # return the resized image
+    return cropped
+
+
 def scale_images(images: np.ndarray, dimensions: tuple) -> np.ndarray:
     """
     Scale images
@@ -141,7 +161,12 @@ def scale_images(images: np.ndarray, dimensions: tuple) -> np.ndarray:
     # Scale and append
     for image in tqdm(images, desc='Scaling images'):
         try:
-            scaled = cv2.resize(image, dsize=dimensions, interpolation=cv2.INTER_CUBIC)
+            h, w = image.shape[:2]
+            if h < dimensions[1] or w < dimensions[0]:
+                continue
+
+            cropped = square_crop_image(image)
+            scaled = cv2.resize(cropped, dsize=dimensions, interpolation=cv2.INTER_AREA)
             new_images.append(scaled)
         except Exception as e:
             print('Failed to resize image:', e)
@@ -151,23 +176,23 @@ def scale_images(images: np.ndarray, dimensions: tuple) -> np.ndarray:
 
 if __name__ == '__main__':
     # Location of raw data
-    raw_dir = '../data/raw'
+    raw_dir = '../data/cats'
 
     # Get images
     images = read_images(dir=raw_dir)
 
     # Get faces
-    faces, boxes = extract_faces(images=images, show_plot=False)
+    # faces, boxes = extract_faces(images=images, show_plot=False)
 
     # Rescale faces --> Nope, let pytorch take care of that
-    #faces = scale_images(images=faces, dimensions=(100,100))
+    cats = scale_images(images=images, dimensions=(128, 128))
 
     # Write faces to folder
-    save_images(images=faces, dir='../data/faces')
+    save_images(images=cats, dir='../data/cats/square')
 
     # Let's also download Cifar
-    cifar_dir = '../data/cifar'
-    cifar.CIFAR10(root=cifar_dir,train=True,download=True)
+    #cifar_dir = '../data/cifar'
+    #cifar.CIFAR10(root=cifar_dir,train=True,download=True)
 
-    plt.imshow(faces[0])
-    plt.show()
+    #plt.imshow(faces[0])
+    #plt.show()
