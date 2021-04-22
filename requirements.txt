@@ -1,0 +1,17 @@
+torch
+torchvision
+torchaudio===0.8.1
+pycuda
+pytorch-lightning
+pytorch-lightning-bolts
+tensorflow
+scikit-image
+wandb
+gym
+sklearn
+matplotlib
+opencv-python
+numpy
+tqdm
+mtcnn
+tensorboard
