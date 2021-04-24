@@ -16,6 +16,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.transforms as transforms
+from torch.nn import Upsample
 from pl_bolts.datamodules import CIFAR10DataModule
 from skimage import io
 from tensorboard import program
@@ -146,7 +147,8 @@ class DoppelGenerator(nn.Sequential):
                     bias=bias
                 ),
                 nn.BatchNorm2d(num_features=out_channels),
-                nn.ReLU(inplace=False)
+                # nn.LeakyReLU(0.2, inplace=True)
+                nn.PReLU(out_channels)
             ).cuda()
 
         self.model = nn.Sequential(
@@ -262,13 +264,13 @@ class DoppelGAN(pl.LightningModule):
             fake_valid = self.adversarial_loss(self.discriminator(self(z).detach()), fake)
             # fake_valid = torch.mean(self.discriminator(self(z).detach()))
 
-            # Compute Wasserstein penalty (probably screwed up :) )
-            penalty = compute_gradient_penalty(discriminator, images.data, fake_images.data, device=device)
+            d_loss = (real_valid + fake_valid) / 2
 
             # Add Wasserstein penalty
-            lambda_gp = 2  # loss weight for the gradient penalty
-
-            d_loss = (real_valid + fake_valid) / 2 + lambda_gp * penalty
+            if 'wasserstein_gp' in self.hparams:
+                # Compute Wasserstein penalty
+                penalty = compute_gradient_penalty(discriminator, images.data, fake_images.data, device=device)
+                d_loss += self.hparams.wasserstein_gp * penalty
 
             tqdm_dict = {'d_loss': d_loss}
 
@@ -284,7 +286,7 @@ class DoppelGAN(pl.LightningModule):
             self.step += 1
             self.opt_g.zero_grad()  # pl?
             # Train the generator every n_critic steps
-            if self.step % 5 == 0:
+            if self.step % self.hparams.ncritics == 0:
 
                 # -----------------
                 #  Train Generator
@@ -297,7 +299,7 @@ class DoppelGAN(pl.LightningModule):
                 # Train on fake images
 
                 # Ground truth result (ie: all fake)
-                valid = torch.ones(images.size(0), 1).cuda()
+                valid = torch.ones(images.size(0), 1, device=device)
                 g_loss = self.adversarial_loss(self.discriminator(self(z)), valid)
                 # g_loss = -torch.mean(self.discriminator(self(z)))
 
@@ -356,8 +358,10 @@ if __name__ == '__main__':
 
     # Global parameter
     image_dim = 128
-    latent_dim = 100
-    batch_size = 64
+    latent_dim = 128
+    batch_size = 32
+    lambda_gp = 20  # loss weight for the gradient penalty
+    critic_steps = 5  # critical steps when generator is trained
 
     # Cifar?
     cifar = False
@@ -379,17 +383,18 @@ if __name__ == '__main__':
         )
 
     # Build models
-    generator = DoppelGenerator(latent_dim=latent_dim)
-    discriminator = DoppelDiscriminator()
+
+    generator = DoppelGenerator(latent_dim=latent_dim).cuda()
+    discriminator = DoppelDiscriminator().cuda()
 
     # Test generator
-    x = torch.rand(batch_size, latent_dim, 1, 1).cuda()
-    y = generator(x).cuda()
+    x = torch.rand(batch_size, latent_dim, 1, 1, device=device)
+    y = generator(x)
     log(f'Generator: x {x.size()} --> y {y.size()}')
 
     # Test discriminator
-    x = torch.rand(batch_size, 3, 128, 128).cuda()
-    y = discriminator(x).cuda()
+    x = torch.rand(batch_size, 3, 128, 128, device=device)
+    y = discriminator(x)
     log(f'Discriminator: x {x.size()} --> y {y.size()}')
 
     # Build GAN
@@ -398,11 +403,13 @@ if __name__ == '__main__':
         channels=3,
         width=image_dim,
         height=image_dim,
-        latent_dim=latent_dim
+        latent_dim=latent_dim,
+        wasserstein_gp=lambda_gp,
+        ncritics=critic_steps
     ).cuda()
 
     # Fit GAN
-    trainer = pl.Trainer(gpus=1, max_epochs=200, progress_bar_refresh_rate=1)
+    trainer = pl.Trainer(gpus=1, max_epochs=4000, progress_bar_refresh_rate=1)
     trainer.fit(model=doppelgan, datamodule=doppel_data_module)
 
     '''
