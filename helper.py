@@ -2,57 +2,75 @@
 Helper functions
 """
 
-from typing import Callable
+import os
 import time
-import os, sys
-from torch import Tensor
+from os.path import join
+from pathlib import Path
+from typing import Callable
+
+from colorama import Fore, Style
 from pytorch_lightning import seed_everything
+from torch import Tensor
+from torch.nn import Module
 
 VERBOSITY = 3
-TIMESTAMPED = False
-DATA_DIR = '../data'
-
+TIMESTAMPED = True
+DATA_DIR = join(Path(os.path.dirname(os.path.abspath(__file__))).parents[1], 'data')
+LOG_DIR = join(Path(os.path.dirname(os.path.abspath(__file__))).parents[1], 'logs')
+TENSOR_NET_TYPES = ['cp', 'cpd', 'canonical', 'tucker', 'train', 'tensor-train', 'tt']
+KUL_PAL = ['#FF7251', '#C58B85', '#8CA5B8', '#52BEEC']
+KUL_PAL2 = ['#FF7251', '#E67D67', '#CE887D','#B59393','#9C9DAA','#83A8C0','#6BB3D6','#52BEEC']
 
 # Set parameters
-def set_params(verbosity: int = None, timestamped: bool = None, data_dir: str = None):
+def set_params(verbosity: int = None, timestamped: bool = None, data_dir: str = None, log_dir: str = None):
     global VERBOSITY
     global TIMESTAMPED
     global DATA_DIR
+    global LOG_DIR
+
+    set_dir(DATA_DIR, LOG_DIR)
 
     VERBOSITY = verbosity if verbosity else VERBOSITY
-    TIMESTAMPED = timestamped if timestamped else TIMESTAMPED
+    TIMESTAMPED = timestamped if timestamped is not None else TIMESTAMPED
     DATA_DIR = data_dir if data_dir else DATA_DIR
+    LOG_DIR = log_dir if log_dir else LOG_DIR
 
-    if data_dir:
-        log("DATA_DIR is now set to {}".format(DATA_DIR), verbosity=1)
-    if verbosity:
-        log("VERBOSITY is set to {}".format(VERBOSITY),verbosity=1)
+    DATA_DIR = os.path.abspath(DATA_DIR)
+    LOG_DIR = os.path.abspath(LOG_DIR)
 
 
-def hi(title=None, params=None):
+def hi(title=None, **params):
     """
     Say hello. (It's stupid, I know.)
     If there's anything to initialize, do so here.
     """
 
     print("\n")
+    print(Fore.BLUE, end='')
     print("    ___                     _  ___   _   _  _")
     print("   |   \ ___ _ __ _ __  ___| |/ __| /_\ | \| |__ _ ___ _ _")
     print("   | |) / _ \ '_ \ '_ \/ -_) | (_ |/ _ \| .` / _` / -_) '_|")
     print("   |___/\___/ .__/ .__/\___|_|\___/_/ \_\_|\_\__, \___|_|")
-    print("            |_|  |_|                         |___/")
+    print("            |_|  |_|                         |___/", end='')
+    print(Style.RESET_ALL)
     print()
 
     if title:
-        log(title, title=True)
+        log(title, title=True, color='blue')
 
-    # Set parameters
-    if params and isinstance(params,dict):
+    # Set params on request
+    if params:
         set_params(**params)
 
-    print("VERBOSITY is set to {}.".format(VERBOSITY))
-    print("DATA_DIR is set to {}".format(DATA_DIR))
+    log(f"VERBOSITY is set to {VERBOSITY}", verbosity=1, timestamped=False, color='green')
+    log(f"TIMESTAMPED is set to {TIMESTAMPED}", verbosity=1, timestamped=False, color='green')
+    log(f"DATA_DIR is now set to {os.path.abspath(DATA_DIR)}", timestamped=False, verbosity=1, color='green')
+    log(f"LOG_DIR is set to {os.path.abspath(LOG_DIR)}", timestamped=False, verbosity=1, color='green')
     print()
+
+    # Set directories
+    if not os.path.exists(DATA_DIR) or not os.path.exists(LOG_DIR):
+         set_dir(DATA_DIR, LOG_DIR)
 
     # Set seed
     seed_everything(616)
@@ -74,7 +92,7 @@ def whatsgoingon(layer: Callable, input: Tensor):
 
 
 # Fancy print
-def log(*message, verbosity=3, timestamped=TIMESTAMPED, sep="", title=False):
+def log(*message, verbosity=3, sep="", timestamped=None, title=False, color=None):
     """
     Print wrapper that adds timestamp, and can be used to toggle levels of logging info.
 
@@ -83,8 +101,21 @@ def log(*message, verbosity=3, timestamped=TIMESTAMPED, sep="", title=False):
     :param timestamped: include timestamp at start of log
     :param sep: separator
     :param title: toggle whether this is a title or not
+    :param color: text color
     :return: /
     """
+
+    # Set colors
+    color_dict = {
+        'red': Fore.RED,
+        'blue': Fore.BLUE,
+        'green': Fore.GREEN,
+        'yellow': Fore.YELLOW,
+        'magenta': Fore.MAGENTA,
+        'cyan': Fore.CYAN,
+    }
+    if color and color in color_dict:
+        color = color_dict[color]
 
     # Title always get shown
     verbosity = 1 if title else verbosity
@@ -95,14 +126,19 @@ def log(*message, verbosity=3, timestamped=TIMESTAMPED, sep="", title=False):
         # Print title
         if title:
             n = len(*message)
+            if color:
+                print(color, end='')
             print('\n' + (n + 4) * '#')
             print('# ', *message, ' #', sep='')
-            print((n + 4) * '#' + '\n')
+            print((n + 4) * '#' + '\n' + Style.RESET_ALL)
 
         # Print regular
         else:
+            ts = timestamped if timestamped is not None else TIMESTAMPED
             t = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-            print((str(t) + (" - " if sep == "" else "-")) if timestamped else "", *message, sep=sep)
+            if color:
+                print(color, end='')
+            print((str(t) + (" - " if sep == "" else "-")) if ts else "", *message, Style.RESET_ALL, sep=sep)
 
     return
 
@@ -126,7 +162,7 @@ def time_it(f: Callable):
     return timed
 
 
-def set_dir(dir) -> str:
+def set_dir(*dirs):
     """
     If folder doesn't exist, make it.
 
@@ -134,10 +170,34 @@ def set_dir(dir) -> str:
     :return: path to dir
     """
 
-    if not os.path.exists(dir):
-        os.makedirs(dir)
-        log("WARNING: Data directory <{dir}> did not exist yet, and was created.".format(dir=dir), verbosity=1)
-    else:
-        log("\'{}\' folder accounted for.".format(dir), verbosity=3)
+    for dir in dirs:
+        if not os.path.exists(dir):
+            os.makedirs(dir)
+            log("WARNING: Data directory <{dir}> did not exist yet, and was created.".format(dir=dir), verbosity=1)
+        else:
+            log("\'{}\' folder accounted for.".format(dir), verbosity=3)
 
-    return dir
+
+def count_params(module: Module, format=None, precision=3):
+    """Count total parameters in a module/model"""
+
+    n = sum(p.numel() for p in module.parameters())
+
+    if format == 'k':
+
+        return f'{round(n/1000,precision)}k params'
+    elif format == 'M':
+
+        return f'{round(n/1000000,precision)}M params'
+    elif format == 'G':
+
+        return f'{round(n/1000000000,precision)}G params'
+    elif format == 'base':
+
+        return f'{round(n, precision)} params'
+
+    else:
+        return n
+
+if __name__ == '__main__':
+    hi('Test!')

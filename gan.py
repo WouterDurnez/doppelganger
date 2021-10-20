@@ -20,7 +20,7 @@ from pl_bolts.datamodules import CIFAR10DataModule
 from skimage import io
 from tensorboard import program
 from torch.utils.data import Dataset, DataLoader, random_split
-from torchvision.transforms import Resize, ToTensor, Normalize
+from torchvision.transforms import Resize, ToTensor
 from torchvision.utils import make_grid
 
 from helper import log, hi
@@ -73,10 +73,10 @@ class DoppelDataModule(pl.LightningDataModule):
 
         self.transforms = transforms.Compose([
             ToTensor(),
-            #Normalize(
+            # Normalize(
             #    mean=[x / 255.0 for x in [125.3, 123.0, 113.9]],
             #    std=[x / 255.0 for x in [63.0, 62.1, 66.7]],
-            #)
+            # )
 
         ])
 
@@ -237,13 +237,13 @@ class DoppelGAN(pl.LightningModule):
 
     def training_step(self, batch, batch_idx, optimizer_idx):
 
-      if cifar:
+        if cifar:
             images, _ = batch
         else:
             images = batch
 
 
-        # Sample noise (batch_size, latent_dim,1,1)
+            # Sample noise (batch_size, latent_dim,1,1)
         z = torch.randn(images.size(0), self.hparams.latent_dim, 1, 1).cuda()
         z = z.type_as(images)
 
@@ -293,25 +293,27 @@ class DoppelGAN(pl.LightningModule):
             }
             return output
 
-    def configure_optimizers(self):
-        lr = self.hparams.lr
-        b1 = self.hparams.b1
-        b2 = self.hparams.b2
 
-        # Optimizers
-        opt_g = torch.optim.Adam(self.generator.parameters(), lr=lr, betas=(b1, b2))
-        opt_d = torch.optim.Adam(self.discriminator.parameters(), lr=lr, betas=(b1, b2))
+def configure_optimizers(self):
+    lr = self.hparams.lr
+    b1 = self.hparams.b1
+    b2 = self.hparams.b2
 
-        # Return optimizers/schedulers (currently no scheduler)
-        return [opt_g, opt_d], []
+    # Optimizers
+    opt_g = torch.optim.Adam(self.generator.parameters(), lr=lr, betas=(b1, b2))
+    opt_d = torch.optim.Adam(self.discriminator.parameters(), lr=lr, betas=(b1, b2))
 
-    def on_epoch_end(self):
-        # Log sampled images
-        self.step = 0
-        sample_images = self(self.validation_z)
+    # Return optimizers/schedulers (currently no scheduler)
+    return [opt_g, opt_d], []
 
-        # grid = make_grid(sample_images)
-        self.logger.experiment.add_images('GAN_images_' + str(self.current_epoch), sample_images, self.current_epoch)
+
+def on_epoch_end(self):
+    # Log sampled images
+    self.step = 0
+    sample_images = self(self.validation_z)
+
+    # grid = make_grid(sample_images)
+    self.logger.experiment.add_images('GAN_images_' + str(self.current_epoch), sample_images, self.current_epoch)
 
 
 if __name__ == '__main__':
@@ -384,7 +386,6 @@ if __name__ == '__main__':
     # Fit GAN
     trainer = pl.Trainer(gpus=1, max_epochs=100, progress_bar_refresh_rate=1)
     trainer.fit(model=doppelgan, datamodule=doppel_data_module)
-
 
     '''
     image = y[0].detach().numpy()
